@@ -9,18 +9,29 @@ function randomImposterIndex() {
   return Math.floor(Math.random() * 4); // You + 3 bots
 }
 
+function oneWord(input) {
+  const cleaned = (input || '').trim().replace(/[^A-Za-z0-9'\-\s]/g, '');
+  return cleaned.split(/\s+/)[0] || '';
+}
+
 export default function Page() {
   const [roleMode, setRoleMode] = useState('random');
   const [phase, setPhase] = useState('setup');
+
   const [secretWord, setSecretWord] = useState('');
   const [imposterName, setImposterName] = useState('');
   const [myRole, setMyRole] = useState('');
   const [botRoles, setBotRoles] = useState({});
-  const [userClue, setUserClue] = useState('');
-  const [botClues, setBotClues] = useState({});
+
+  const [turnOrder, setTurnOrder] = useState([]);
+  const [turnIndex, setTurnIndex] = useState(0);
+  const [turns, setTurns] = useState([]);
+  const [myWord, setMyWord] = useState('');
+
   const [myVote, setMyVote] = useState('');
   const [botVotes, setBotVotes] = useState({});
   const [result, setResult] = useState(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -32,41 +43,84 @@ export default function Page() {
 
     let impIndex = randomImposterIndex();
     if (roleMode === 'imposter') impIndex = 0;
-    if (roleMode === 'non-imposter') {
-      impIndex = 1 + Math.floor(Math.random() * 3);
-    }
+    if (roleMode === 'non-imposter') impIndex = 1 + Math.floor(Math.random() * 3);
 
     const impName = allPlayers[impIndex];
-    const roles = Object.fromEntries(BOT_NAMES.map((name) => [name, name === impName ? 'imposter' : 'crewmate']));
+    const roles = Object.fromEntries(
+      BOT_NAMES.map((name) => [name, name === impName ? 'imposter' : 'crewmate'])
+    );
+
+    const startIndex = Math.floor(Math.random() * allPlayers.length);
+    const order = Array.from({ length: allPlayers.length }, (_, i) => allPlayers[(startIndex + i) % allPlayers.length]);
 
     setSecretWord(chosenWord);
     setImposterName(impName);
     setMyRole(impName === 'You' ? 'imposter' : 'crewmate');
     setBotRoles(roles);
-    setUserClue('');
-    setBotClues({});
+
+    setTurnOrder(order);
+    setTurnIndex(0);
+    setTurns([]);
+    setMyWord('');
+
     setMyVote('');
     setBotVotes({});
     setResult(null);
+
     setError('');
-    setPhase('clues');
+    setPhase('turns');
   }
 
-  async function generateBotClues() {
+  const currentPlayer = phase === 'turns' ? turnOrder[turnIndex] : null;
+
+  async function submitMyWord() {
+    const word = oneWord(myWord);
+    if (!word) return;
+
+    const nextTurns = [...turns, { player: 'You', word }];
+    setTurns(nextTurns);
+    setMyWord('');
+
+    if (nextTurns.length >= 4) {
+      setPhase('voting');
+      return;
+    }
+
+    setTurnIndex((x) => x + 1);
+  }
+
+  async function runBotTurn() {
+    if (!currentPlayer || currentPlayer === 'You') return;
+
     setLoading(true);
     setError('');
     try {
+      const role = botRoles[currentPlayer];
       const res = await fetch('/api/game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'generate-bot-clues', botRoles, secretWord })
+        body: JSON.stringify({
+          action: 'bot-turn',
+          botName: currentPlayer,
+          role,
+          secretWord,
+          publicTurns: turns
+        })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Failed to generate bot clues');
-      setBotClues(data.botClues || {});
-      setPhase('voting');
+      if (!res.ok) throw new Error(data?.error || 'Bot turn failed');
+
+      const word = oneWord(data?.word || 'hmm');
+      const nextTurns = [...turns, { player: currentPlayer, word }];
+      setTurns(nextTurns);
+
+      if (nextTurns.length >= 4) {
+        setPhase('voting');
+      } else {
+        setTurnIndex((x) => x + 1);
+      }
     } catch (e) {
-      setError(e.message || 'Failed to generate bot clues');
+      setError(e.message || 'Bot turn failed');
     } finally {
       setLoading(false);
     }
@@ -81,7 +135,12 @@ export default function Page() {
       const res = await fetch('/api/game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'generate-bot-votes', botRoles, botClues, userClue })
+        body: JSON.stringify({
+          action: 'generate-bot-votes',
+          botRoles,
+          secretWord,
+          publicTurns: turns
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Failed to generate bot votes');
@@ -112,7 +171,7 @@ export default function Page() {
     <main style={{ maxWidth: 920, margin: '0 auto', padding: 24 }}>
       <h1 style={{ marginTop: 0 }}>Imposter Offline (AI Bots)</h1>
       <p style={{ opacity: 0.82 }}>
-        Solo mode with 3 AI characters. Bot clue generation is isolated so bots do not receive each others&apos; clues.
+        Turn-based one-word mode. Bots get full public state (all spoken words + who said them) and their own private role/word.
       </p>
       {error && (
         <div style={{ ...card, borderColor: '#8b2b2b', background: '#2a1414' }}>
@@ -144,36 +203,53 @@ export default function Page() {
           {myRole === 'crewmate' ? (
             <p>Secret word: <strong>{secretWord}</strong></p>
           ) : (
-            <p>You are the imposter — blend in without knowing the secret word.</p>
+            <p>You are the imposter — you do not know the secret word.</p>
           )}
-          <p style={{ opacity: 0.8 }}>Players: You, {BOT_NAMES.join(', ')}</p>
+          <p style={{ opacity: 0.8 }}>Turn order: {turnOrder.join(' → ')}</p>
         </section>
       )}
 
-      {phase === 'clues' && (
+      {phase === 'turns' && (
         <section style={card}>
-          <h2 style={h2}>Round 1: Clues</h2>
-          <input
-            value={userClue}
-            onChange={(e) => setUserClue(e.target.value)}
-            placeholder="Your clue (2-6 words)"
-            style={input}
-          />
-          <div style={{ marginTop: 12 }}>
-            <button onClick={generateBotClues} disabled={loading || !userClue.trim()} style={primaryBtn}>
-              {loading ? 'Generating bot clues…' : 'Lock clue + generate bots'}
+          <h2 style={h2}>Word turns ({turns.length}/4)</h2>
+          <p>Current player: <strong>{currentPlayer}</strong></p>
+
+          {currentPlayer === 'You' ? (
+            <>
+              <input
+                value={myWord}
+                onChange={(e) => setMyWord(e.target.value)}
+                placeholder="Your one word"
+                style={input}
+              />
+              <div style={{ marginTop: 12 }}>
+                <button onClick={submitMyWord} disabled={loading || !oneWord(myWord)} style={primaryBtn}>
+                  Submit word
+                </button>
+              </div>
+            </>
+          ) : (
+            <button onClick={runBotTurn} disabled={loading} style={primaryBtn}>
+              {loading ? `${currentPlayer} is thinking…` : `Run ${currentPlayer}'s turn`}
             </button>
-          </div>
+          )}
+
+          {turns.length > 0 && (
+            <ul style={{ marginTop: 12 }}>
+              {turns.map((t, i) => (
+                <li key={`${t.player}-${i}`}><strong>{t.player}:</strong> {t.word}</li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 
       {(phase === 'voting' || phase === 'result') && (
         <section style={card}>
-          <h2 style={h2}>Clues</h2>
+          <h2 style={h2}>Public words</h2>
           <ul>
-            <li><strong>You:</strong> {userClue}</li>
-            {BOT_NAMES.map((name) => (
-              <li key={name}><strong>{name}:</strong> {botClues[name]}</li>
+            {turns.map((t, i) => (
+              <li key={`${t.player}-${i}`}><strong>{t.player}:</strong> {t.word}</li>
             ))}
           </ul>
         </section>
@@ -201,6 +277,7 @@ export default function Page() {
           <h2 style={h2}>Result: {result.winner}</h2>
           <p>Most voted: <strong>{result.top}</strong></p>
           <p>Actual imposter: <strong>{result.imposterName}</strong></p>
+          {myRole === 'crewmate' && <p>Secret word was: <strong>{secretWord}</strong></p>}
           <h3 style={{ marginBottom: 8 }}>Votes</h3>
           <ul>
             {Object.entries(result.allVotes).map(([name, v]) => (
