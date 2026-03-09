@@ -1,9 +1,20 @@
 'use client';
 
+import { useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 
 export default function Page() {
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat();
+  const [input, setInput] = useState('');
+  const { messages, sendMessage, status } = useChat();
+  const isLoading = status === 'submitted' || status === 'streaming';
+
+  const onSubmit = (e) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    sendMessage({ text });
+    setInput('');
+  };
 
   return (
     <main style={{ maxWidth: 760, margin: '0 auto', padding: 24 }}>
@@ -15,15 +26,20 @@ export default function Page() {
         {messages.map((m) => (
           <div key={m.id} style={{ marginBottom: 12 }}>
             <strong style={{ textTransform: 'capitalize' }}>{m.role}:</strong>{' '}
-            <span>{m.content}</span>
+            <span>
+              {m.parts
+                ?.filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('') || ''}
+            </span>
           </div>
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8 }}>
+      <form onSubmit={onSubmit} style={{ display: 'flex', gap: 8 }}>
         <input
           value={input}
-          onChange={handleInputChange}
+          onChange={(e) => setInput(e.target.value)}
           placeholder="Type a message..."
           style={{ flex: 1, padding: 12, borderRadius: 10, border: '1px solid #2a3355', background: '#0f1530', color: '#e8ecff' }}
         />
