@@ -22,6 +22,7 @@ export default function Page() {
   const [botVotes, setBotVotes] = useState({});
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const allPlayers = useMemo(() => ['You', ...BOT_NAMES], []);
 
@@ -47,11 +48,13 @@ export default function Page() {
     setMyVote('');
     setBotVotes({});
     setResult(null);
+    setError('');
     setPhase('clues');
   }
 
   async function generateBotClues() {
     setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/game', {
         method: 'POST',
@@ -59,8 +62,11 @@ export default function Page() {
         body: JSON.stringify({ action: 'generate-bot-clues', botRoles, secretWord })
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to generate bot clues');
       setBotClues(data.botClues || {});
       setPhase('voting');
+    } catch (e) {
+      setError(e.message || 'Failed to generate bot clues');
     } finally {
       setLoading(false);
     }
@@ -70,6 +76,7 @@ export default function Page() {
     if (!myVote) return;
 
     setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/game', {
         method: 'POST',
@@ -77,6 +84,7 @@ export default function Page() {
         body: JSON.stringify({ action: 'generate-bot-votes', botRoles, botClues, userClue })
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to generate bot votes');
       const generatedBotVotes = data.botVotes || {};
       setBotVotes(generatedBotVotes);
 
@@ -93,6 +101,8 @@ export default function Page() {
 
       setResult({ winner, allVotes, top, imposterName });
       setPhase('result');
+    } catch (e) {
+      setError(e.message || 'Failed to generate bot votes');
     } finally {
       setLoading(false);
     }
@@ -104,6 +114,11 @@ export default function Page() {
       <p style={{ opacity: 0.82 }}>
         Solo mode with 3 AI characters. Bot clue generation is isolated so bots do not receive each others&apos; clues.
       </p>
+      {error && (
+        <div style={{ ...card, borderColor: '#8b2b2b', background: '#2a1414' }}>
+          <strong>Game error:</strong> {error}
+        </div>
+      )}
 
       {phase === 'setup' && (
         <section style={card}>

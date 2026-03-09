@@ -69,41 +69,48 @@ Return JSON only: {"vote":"name","reason":"..."}`;
 }
 
 export async function POST(req) {
-  const body = await req.json();
-  const { action } = body || {};
+  try {
+    const body = await req.json();
+    const { action } = body || {};
 
-  if (action === 'generate-bot-clues') {
-    const { botRoles, secretWord } = body;
-    const entries = await Promise.all(
-      Object.entries(botRoles).map(async ([name, role]) => {
-        const clue = await generateBotClue({ name, role, secretWord });
-        return [name, clue];
-      })
+    if (action === 'generate-bot-clues') {
+      const { botRoles, secretWord } = body;
+      const entries = await Promise.all(
+        Object.entries(botRoles).map(async ([name, role]) => {
+          const clue = await generateBotClue({ name, role, secretWord });
+          return [name, clue];
+        })
+      );
+
+      return Response.json({ botClues: Object.fromEntries(entries) });
+    }
+
+    if (action === 'generate-bot-votes') {
+      const { botRoles, botClues, userClue } = body;
+      const names = ['You', ...Object.keys(botRoles)];
+
+      const entries = await Promise.all(
+        Object.entries(botRoles).map(async ([name, role]) => {
+          const candidates = names.filter((n) => n !== name);
+          const { vote, reason } = await generateBotVote({
+            name,
+            role,
+            ownClue: botClues?.[name] || '',
+            userClue,
+            candidates
+          });
+          return [name, { vote, reason }];
+        })
+      );
+
+      return Response.json({ botVotes: Object.fromEntries(entries) });
+    }
+
+    return Response.json({ error: 'Unknown action' }, { status: 400 });
+  } catch (error) {
+    return Response.json(
+      { error: error?.message || 'Game API error' },
+      { status: 500 }
     );
-
-    return Response.json({ botClues: Object.fromEntries(entries) });
   }
-
-  if (action === 'generate-bot-votes') {
-    const { botRoles, botClues, userClue } = body;
-    const names = ['You', ...Object.keys(botRoles)];
-
-    const entries = await Promise.all(
-      Object.entries(botRoles).map(async ([name, role]) => {
-        const candidates = names.filter((n) => n !== name);
-        const { vote, reason } = await generateBotVote({
-          name,
-          role,
-          ownClue: botClues?.[name] || '',
-          userClue,
-          candidates
-        });
-        return [name, { vote, reason }];
-      })
-    );
-
-    return Response.json({ botVotes: Object.fromEntries(entries) });
-  }
-
-  return Response.json({ error: 'Unknown action' }, { status: 400 });
 }
